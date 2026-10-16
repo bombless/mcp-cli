@@ -19,7 +19,8 @@ Or run during development with `npm run dev -- <command>`.
 
 ## Commands
 
-- `mcp connect` — reuse a saved token or prepare the OAuth authorization session over HTTP (no browser).
+- `mcp connect` — save a rollback snapshot, then reuse a saved token or prepare the OAuth authorization session over HTTP (no browser).
+- `mcp rollback` (or `mcp connect --rollback`) — restore the exact auth-file contents from before the most recent `mcp connect`, including undoing state changes made later by `mcp otp`.
 - `mcp otp <six-digit-code>` — submit the one-time code, finish OAuth, initialize MCP, and discover tools.
 - `mcp help` — show connection state, available remote tools, descriptions, and usage.
 - `mcp help <tool-name>` — show that tool's input schema and its output schema when the server provides one.
@@ -42,7 +43,7 @@ The example OTP and tool name are placeholders.
 
 OAuth uses dynamic client registration and PKCE. Access/refresh tokens and pending PKCE state are stored in `~/.config/mcp-cli/auth.json` (or the path in `MCP_AUTH_FILE`) with owner-only file permissions. Do not share this file or commit it. If authorization expires, run `mcp connect` again.
 
-The remote endpoint can be overridden with `MCP_URL`.
+The remote endpoint can be overridden with `MCP_URL`. The connect rollback snapshot is stored next to the auth file as `auth.json.connect-backup` (or alongside the path set by `MCP_AUTH_FILE`) with owner-only permissions. A new `mcp connect` replaces the previous snapshot; run `mcp rollback` before starting another connect operation if you want to undo the earlier one.
 
 ## Notes
 

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
+import { mkdir, readFile, writeFile, chmod, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
 const ENDPOINT = process.env.MCP_URL ?? "https://bombless.duckdns.org/mcp";
 const AUTH_FILE = process.env.MCP_AUTH_FILE ?? join(homedir(), ".config", "mcp-cli", "auth.json");
+const CONNECT_BACKUP_FILE = AUTH_FILE + ".connect-backup";
 const REDIRECT_URI = "http://127.0.0.1:43127/oauth/callback";
 const CLIENT_NAME = "mcp-cli";
 type Tool = { name: string; description?: string; inputSchema?: Record<string, unknown>; outputSchema?: Record<string, unknown>; [key: string]: unknown };
@@ -29,6 +30,39 @@ async function saveState(state: OAuthState): Promise<void> {
   await writeFile(AUTH_FILE, JSON.stringify(state, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
   await chmod(AUTH_FILE, 0o600).catch(() => undefined);
 }
+async function backupConnectState(): Promise<void> {
+  let snapshot: { existed: boolean; content?: string };
+  try { snapshot = { existed: true, content: await readFile(AUTH_FILE, "utf8") }; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    snapshot = { existed: false };
+  }
+  await mkdir(dirname(CONNECT_BACKUP_FILE), { recursive: true, mode: 0o700 });
+  await writeFile(CONNECT_BACKUP_FILE, JSON.stringify(snapshot), { encoding: "utf8", mode: 0o600 });
+  await chmod(CONNECT_BACKUP_FILE, 0o600).catch(() => undefined);
+}
+async function rollbackConnect(): Promise<void> {
+  let snapshot: { existed: boolean; content?: string };
+  try { snapshot = JSON.parse(await readFile(CONNECT_BACKUP_FILE, "utf8")); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error('No connect backup found. Run "mcp connect" before "mcp rollback".');
+    }
+    throw new Error("Could not read the connect backup; auth state was not changed.");
+  }
+  if (snapshot.existed) {
+    if (typeof snapshot.content !== "string") throw new Error("Connect backup is invalid; auth state was not changed.");
+    await mkdir(dirname(AUTH_FILE), { recursive: true, mode: 0o700 });
+    await writeFile(AUTH_FILE, snapshot.content, { encoding: "utf8", mode: 0o600 });
+    await chmod(AUTH_FILE, 0o600).catch(() => undefined);
+  } else {
+    await unlink(AUTH_FILE).catch(error => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    });
+  }
+  await unlink(CONNECT_BACKUP_FILE);
+  console.log("Rolled back the last mcp connect operation. The previous auth state has been restored.");
+}
 async function responseJson(response: Response): Promise<any> {
   const text = await response.text(); let body: any;
   try { body = text ? JSON.parse(text) : {}; } catch { body = undefined; }
@@ -41,6 +75,7 @@ function tokenEndpoint(meta: Record<string, string>): string {
   return meta.token_endpoint;
 }
 async function connect(): Promise<void> {
+  await backupConnectState();
   const saved = await loadState();
   if (saved.access_token) {
     try {
@@ -217,6 +252,7 @@ async function help(toolName?: string): Promise<void> {
 function printUsage(): void {
   console.log("Usage:");
   console.log("  mcp connect                 Start OAuth login (or reuse saved credentials)");
+  console.log("  mcp rollback                Restore auth state from before the last mcp connect");
   console.log("  mcp otp <six-digit-code>    Complete login with the one-time code");
   console.log("  mcp help                    Show connection and remote tool overview");
   console.log("  mcp help <tool-name>        Show a tool's description, input schema, and output schema (if provided)");
@@ -242,7 +278,8 @@ async function callTool(name: string, jsonArg?: string): Promise<void> {
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === "help" || command === "--help" || command === "-h") { await help(args[0]); return; }
-  if (command === "connect") { await connect(); return; }
+  if (command === "connect") { if (args[0] === "--rollback") { await rollbackConnect(); return; } await connect(); return; }
+  if (command === "rollback") { await rollbackConnect(); return; }
   if (command === "otp") { await submitOtp(args[0]); return; }
   if (command === "--version" || command === "-v") { console.log("0.1.0"); return; }
   if (command.startsWith("-")) { printUsage(); process.exitCode = 2; return; }
