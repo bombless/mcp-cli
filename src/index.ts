@@ -8,10 +8,11 @@ const ENDPOINT = process.env.MCP_URL ?? "https://bombless.duckdns.org/mcp";
 const AUTH_FILE = process.env.MCP_AUTH_FILE ?? join(homedir(), ".config", "mcp-cli", "auth.json");
 const REDIRECT_URI = "http://127.0.0.1:43127/oauth/callback";
 const CLIENT_NAME = "mcp-cli";
-type Tool = { name: string; description?: string; inputSchema?: Record<string, unknown>; [key: string]: unknown };
+type Tool = { name: string; description?: string; inputSchema?: Record<string, unknown>; outputSchema?: Record<string, unknown>; [key: string]: unknown };
 type OAuthState = {
   access_token?: string; refresh_token?: string; client_info?: Record<string, unknown>;
   auth_meta?: Record<string, string>;
+  tool_output_schemas?: Record<string, Record<string, unknown>>;
   pending?: { verifier: string; state: string; redirectUri: string; createdAt: number;
     clientInfo: Record<string, unknown>; authMeta: Record<string, string>; resource?: string; scopes?: string[] };
 };
@@ -44,6 +45,7 @@ async function connect(): Promise<void> {
   if (saved.access_token) {
     try {
       const tools = await initializeAndList(saved.access_token);
+      await saveToolOutputSchemas(tools);
       console.log(`Already connected. Discovered ${tools.length} tool(s). Run "mcp help" to list them.`); return;
     } catch (error) {
       console.error("Saved access token could not connect:", error instanceof Error ? error.message : String(error));
@@ -87,8 +89,9 @@ async function connect(): Promise<void> {
     verifier, state: stateValue, redirectUri: REDIRECT_URI, createdAt: Date.now(), clientInfo, authMeta,
     resource: resourceMeta.resource, scopes: resourceMeta.scopes_supported
   } });
-  console.log("Open this URL and complete the remote login/2FA step:\n" + authorize.toString());
-  console.log("\nThen run: mcp otp <six-digit-code>\nThe authorization request expires in 5 minutes.");
+  console.log("Authorization request prepared over HTTP. No browser is needed.");
+  console.log("Enter the current six-digit authenticator code: mcp otp <six-digit-code>");
+  console.log("The authorization request expires in 5 minutes.");
 }
 async function cryptoSubtleSha256(value: string): Promise<Uint8Array> {
   return new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
@@ -132,6 +135,7 @@ async function submitOtp(codeArg?: string): Promise<void> {
     client_info: pending.clientInfo, auth_meta: pending.authMeta };
   await saveState(next);
   const tools = await initializeAndList(next.access_token!);
+  await saveToolOutputSchemas(tools);
   console.log(`Connected successfully. Discovered ${tools.length} tool(s). Run "mcp help" to see them.`);
 }
 async function mcpRequest(accessToken: string, method: string, params: Record<string, unknown> = {}): Promise<any> {
@@ -156,24 +160,53 @@ async function mcpRequest(accessToken: string, method: string, params: Record<st
   if (payload.error) throw new Error(`MCP error ${payload.error.code}: ${payload.error.message}`);
   return payload.result ?? {};
 }
+async function mcpNotification(accessToken: string, method: string, params: Record<string, unknown> = {}): Promise<void> {
+  const response = await fetch(ENDPOINT, { method: "POST", headers: {
+    Authorization: "Bearer " + accessToken, "Content-Type": "application/json",
+    Accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2025-03-26",
+    ...(sessionId ? { "MCP-Session-Id": sessionId } : {})
+  }, body: JSON.stringify({ jsonrpc: "2.0", method, params }) });
+  const sid = response.headers.get("mcp-session-id"); if (sid) sessionId = sid;
+  if (!response.ok && response.status !== 202) {
+    const text = await response.text();
+    throw new Error(`MCP notification ${method} failed (${response.status}): ${text.slice(0, 300)}`);
+  }
+}
 async function initializeAndList(accessToken: string): Promise<Tool[]> {
   await mcpRequest(accessToken, "initialize", { protocolVersion: "2025-03-26", capabilities: {},
     clientInfo: { name: CLIENT_NAME, version: "0.1.0" } });
-  await mcpRequest(accessToken, "notifications/initialized", {});
+  // MCP notifications are JSON-RPC messages without an id and must not expect a JSON-RPC result.
+  await mcpNotification(accessToken, "notifications/initialized");
   const result = await mcpRequest(accessToken, "tools/list", {});
   return Array.isArray(result.tools) ? result.tools as Tool[] : [];
 }
 function pretty(value: unknown): string { return JSON.stringify(value, null, 2); }
+async function saveToolOutputSchemas(tools: Tool[]): Promise<void> {
+  const saved = await loadState();
+  const schemas = Object.fromEntries(
+    tools.filter((tool): tool is Tool & { outputSchema: Record<string, unknown> } =>
+      !!tool.outputSchema && typeof tool.outputSchema === "object" && !Array.isArray(tool.outputSchema)
+    ).map(tool => [tool.name, tool.outputSchema])
+  );
+  // Replace the cache, rather than merge it, so removed/changed server schemas do not stay stale.
+  await saveState({ ...saved, tool_output_schemas: schemas });
+}
 async function help(toolName?: string): Promise<void> {
   const saved = await loadState();
   if (!saved.access_token) {
     console.log('Not connected yet. Run "mcp connect", then "mcp otp <six-digit-code>".'); printUsage(); return;
   }
   const tools = await initializeAndList(saved.access_token);
+  await saveToolOutputSchemas(tools);
+  const latestState = await loadState();
   if (toolName) {
     const tool = tools.find(item => item.name === toolName);
     if (!tool) { console.error(`Unknown tool "${toolName}". Run "mcp help" to list available tools.`); process.exitCode = 1; return; }
-    console.log(`${tool.name}${tool.description ? " — " + tool.description : ""}\nInput schema:\n${pretty(tool.inputSchema ?? { type: "object", properties: {} })}\n\nUsage: mcp ${tool.name} '<json-object>'`);
+    const outputSchema = tool.outputSchema ?? latestState.tool_output_schemas?.[tool.name];
+    const outputSection = outputSchema
+      ? `\n\nOutput schema:\n${pretty(outputSchema)}`
+      : "\n\nOutput schema: Not provided by server.";
+    console.log(`${tool.name}${tool.description ? " — " + tool.description : ""}\nInput schema:\n${pretty(tool.inputSchema ?? { type: "object", properties: {} })}${outputSection}\n\nUsage: mcp ${tool.name} '<json-object>'`);
     return;
   }
   console.log(`Remote MCP: ${ENDPOINT}\nConnected. ${tools.length} tool(s) available.\n`);
@@ -186,7 +219,7 @@ function printUsage(): void {
   console.log("  mcp connect                 Start OAuth login (or reuse saved credentials)");
   console.log("  mcp otp <six-digit-code>    Complete login with the one-time code");
   console.log("  mcp help                    Show connection and remote tool overview");
-  console.log("  mcp help <tool-name>        Show a tool's description and JSON input schema");
+  console.log("  mcp help <tool-name>        Show a tool's description, input schema, and output schema (if provided)");
   console.log("  mcp <tool-name> '<json>'    Call a remote tool with JSON arguments");
   console.log("\nExample: mcp tool-foo '{\"query\":\"hello\"}'");
 }

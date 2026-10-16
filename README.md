@@ -19,17 +19,17 @@ Or run during development with `npm run dev -- <command>`.
 
 ## Commands
 
-- `mcp connect` — reuse a saved token or start OAuth authorization and print the login URL.
+- `mcp connect` — reuse a saved token or prepare the OAuth authorization session over HTTP (no browser).
 - `mcp otp <six-digit-code>` — submit the one-time code, finish OAuth, initialize MCP, and discover tools.
 - `mcp help` — show connection state, available remote tools, descriptions, and usage.
-- `mcp help <tool-name>` — show that tool's input schema.
+- `mcp help <tool-name>` — show that tool's input schema and its output schema when the server provides one.
 - `mcp <tool-name> '<json-object>'` — call a remote tool and print its result.
 
 Example:
 
 ```sh
 mcp connect
-# Open the printed authorization URL, then enter the six-digit code:
+# Enter the current six-digit authenticator code directly; no browser needed:
 mcp otp 123456
 mcp help
 mcp help tool-foo
