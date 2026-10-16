@@ -7,23 +7,38 @@ import { homedir } from "node:os";
 const ENDPOINT = process.env.MCP_URL ?? "https://bombless.duckdns.org/mcp";
 const AUTH_FILE = process.env.MCP_AUTH_FILE ?? join(homedir(), ".config", "mcp-cli", "auth.json");
 const CONNECT_BACKUP_FILE = AUTH_FILE + ".connect-backup";
+const TOOL_CACHE_FILE = AUTH_FILE + ".tools-cache.json";
 const REDIRECT_URI = "http://127.0.0.1:43127/oauth/callback";
 const CLIENT_NAME = "mcp-cli";
 type Tool = { name: string; description?: string; inputSchema?: Record<string, unknown>; outputSchema?: Record<string, unknown>; [key: string]: unknown };
 type OAuthState = {
   access_token?: string; refresh_token?: string; client_info?: Record<string, unknown>;
   auth_meta?: Record<string, string>;
-  tool_output_schemas?: Record<string, Record<string, unknown>>;
   pending?: { verifier: string; state: string; redirectUri: string; createdAt: number;
     clientInfo: Record<string, unknown>; authMeta: Record<string, string>; resource?: string; scopes?: string[] };
 };
 type ResourceMeta = { authorization_servers?: string[]; resource?: string; scopes_supported?: string[] };
+type ToolCache = { updatedAt: string; tools: Tool[] };
 let sessionId: string | undefined;
 let requestId = 0;
 function random(size = 32): string { return randomBytes(size).toString("base64url"); }
 function wellKnown(base: string, suffix: string): string { return new URL(base).origin + "/.well-known/" + suffix; }
 async function loadState(): Promise<OAuthState> {
-  try { return JSON.parse(await readFile(AUTH_FILE, "utf8")) as OAuthState; } catch { return {}; }
+  try {
+    const parsed = JSON.parse(await readFile(AUTH_FILE, "utf8")) as OAuthState & { tool_output_schemas?: Record<string, Record<string, unknown>> };
+    if (parsed.tool_output_schemas) {
+      // One-time migration from the old auth.json schema cache into the dedicated tool cache.
+      if (!(await loadToolCache())) {
+        await saveToolCache(Object.entries(parsed.tool_output_schemas).map(([name, outputSchema]) => ({ name, outputSchema })));
+      }
+      delete parsed.tool_output_schemas;
+      await saveState(parsed);
+    }
+    return parsed;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw new Error("Could not read the authentication state file.");
+  }
 }
 async function saveState(state: OAuthState): Promise<void> {
   await mkdir(dirname(AUTH_FILE), { recursive: true, mode: 0o700 });
@@ -46,7 +61,7 @@ async function rollbackConnect(): Promise<void> {
   try { snapshot = JSON.parse(await readFile(CONNECT_BACKUP_FILE, "utf8")); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error('No connect backup found. Run "mcp connect" before "mcp rollback".');
+      throw new Error('No connect backup found. Run "mcp --connect" before "mcp --rollback".');
     }
     throw new Error("Could not read the connect backup; auth state was not changed.");
   }
@@ -61,7 +76,27 @@ async function rollbackConnect(): Promise<void> {
     });
   }
   await unlink(CONNECT_BACKUP_FILE);
-  console.log("Rolled back the last mcp connect operation. The previous auth state has been restored.");
+  console.log("Rolled back the last mcp --connect operation. The previous authentication state has been restored.");
+}
+async function saveToolCache(tools: Tool[]): Promise<void> {
+  await mkdir(dirname(TOOL_CACHE_FILE), { recursive: true, mode: 0o700 });
+  await writeFile(TOOL_CACHE_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), tools } satisfies ToolCache, null, 2) + "\n",
+    { encoding: "utf8", mode: 0o600 });
+  await chmod(TOOL_CACHE_FILE, 0o600).catch(() => undefined);
+}
+async function loadToolCache(): Promise<ToolCache | undefined> {
+  try {
+    const cache = JSON.parse(await readFile(TOOL_CACHE_FILE, "utf8")) as ToolCache;
+    return Array.isArray(cache.tools) ? cache : undefined;
+  } catch { return undefined; }
+}
+async function disconnect(): Promise<void> {
+  for (const file of [AUTH_FILE, CONNECT_BACKUP_FILE]) {
+    await unlink(file).catch(error => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    });
+  }
+  console.log("Disconnected locally. Saved credentials, pending authorization, and rollback backup were removed; tool cache was kept.");
 }
 async function responseJson(response: Response): Promise<any> {
   const text = await response.text(); let body: any;
@@ -80,8 +115,8 @@ async function connect(): Promise<void> {
   if (saved.access_token) {
     try {
       const tools = await initializeAndList(saved.access_token);
-      await saveToolOutputSchemas(tools);
-      console.log(`Already connected. Discovered ${tools.length} tool(s). Run "mcp help" to list them.`); return;
+      await saveToolCache(tools);
+      console.log(`Already connected. Discovered ${tools.length} tool(s). Run "mcp --help" to list them.`); return;
     } catch (error) {
       console.error("Saved access token could not connect:", error instanceof Error ? error.message : String(error));
       delete saved.access_token;
@@ -125,7 +160,7 @@ async function connect(): Promise<void> {
     resource: resourceMeta.resource, scopes: resourceMeta.scopes_supported
   } });
   console.log("Authorization request prepared over HTTP. No browser is needed.");
-  console.log("Enter the current six-digit authenticator code: mcp otp <six-digit-code>");
+  console.log("Enter the current six-digit authenticator code: mcp --otp <six-digit-code>");
   console.log("The authorization request expires in 5 minutes.");
 }
 async function cryptoSubtleSha256(value: string): Promise<Uint8Array> {
@@ -133,11 +168,11 @@ async function cryptoSubtleSha256(value: string): Promise<Uint8Array> {
 }
 async function submitOtp(codeArg?: string): Promise<void> {
   const code = (codeArg ?? "").replace(/\s+/g, "");
-  if (!/^\d{6}$/.test(code)) throw new Error("Usage: mcp otp <six-digit-code>");
+  if (!/^\d{6}$/.test(code)) throw new Error("Usage: mcp --otp <six-digit-code>");
   const saved = await loadState(); const pending = saved.pending;
-  if (!pending) throw new Error('No pending authorization. Run "mcp connect" first.');
+  if (!pending) throw new Error('No pending authorization. Run "mcp --connect" first.');
   if (Date.now() - pending.createdAt > 5 * 60 * 1000) {
-    delete saved.pending; await saveState(saved); throw new Error('Authorization expired. Run "mcp connect" again.');
+    delete saved.pending; await saveState(saved); throw new Error('Authorization expired. Run "mcp --connect" again.');
   }
   const approveUrl = new URL("/oauth/authorize/approve", new URL(pending.authMeta.authorization_endpoint).origin);
   approveUrl.searchParams.set("client_id", String(pending.clientInfo.client_id));
@@ -166,12 +201,13 @@ async function submitOtp(codeArg?: string): Promise<void> {
       client_id: String(pending.clientInfo.client_id), code_verifier: pending.verifier })
   }));
   if (!tokenResponse.access_token) throw new Error("OAuth token response did not contain access_token");
-  const next: OAuthState = { access_token: tokenResponse.access_token, refresh_token: tokenResponse.refresh_token,
+  const next: OAuthState = { ...saved, access_token: tokenResponse.access_token, refresh_token: tokenResponse.refresh_token,
     client_info: pending.clientInfo, auth_meta: pending.authMeta };
+  delete next.pending;
   await saveState(next);
   const tools = await initializeAndList(next.access_token!);
-  await saveToolOutputSchemas(tools);
-  console.log(`Connected successfully. Discovered ${tools.length} tool(s). Run "mcp help" to see them.`);
+  await saveToolCache(tools);
+  console.log(`Connected successfully. Discovered ${tools.length} tool(s). Run "mcp --help" to see them.`);
 }
 async function mcpRequest(accessToken: string, method: string, params: Record<string, unknown> = {}): Promise<any> {
   const response = await fetch(ENDPOINT, { method: "POST", headers: {
@@ -179,7 +215,7 @@ async function mcpRequest(accessToken: string, method: string, params: Record<st
     Accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2025-03-26",
     ...(sessionId ? { "MCP-Session-Id": sessionId } : {})
   }, body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method, params }) });
-  if (response.status === 401) throw new Error('MCP token expired or unauthorized. Run "mcp connect" again.');
+  if (response.status === 401) throw new Error('MCP token expired or unauthorized. Run "mcp --connect" again.');
   const sid = response.headers.get("mcp-session-id"); if (sid) sessionId = sid;
   const text = await response.text();
   if (!response.ok) throw new Error(`MCP request failed (${response.status}): ${text.slice(0, 500)}`);
@@ -216,30 +252,37 @@ async function initializeAndList(accessToken: string): Promise<Tool[]> {
   return Array.isArray(result.tools) ? result.tools as Tool[] : [];
 }
 function pretty(value: unknown): string { return JSON.stringify(value, null, 2); }
-async function saveToolOutputSchemas(tools: Tool[]): Promise<void> {
+async function refreshTools(): Promise<Tool[]> {
   const saved = await loadState();
-  const schemas = Object.fromEntries(
-    tools.filter((tool): tool is Tool & { outputSchema: Record<string, unknown> } =>
-      !!tool.outputSchema && typeof tool.outputSchema === "object" && !Array.isArray(tool.outputSchema)
-    ).map(tool => [tool.name, tool.outputSchema])
-  );
-  // Replace the cache, rather than merge it, so removed/changed server schemas do not stay stale.
-  await saveState({ ...saved, tool_output_schemas: schemas });
+  if (!saved.access_token) throw new Error('Not connected. Run "mcp --connect" and, if prompted, "mcp --otp <six-digit-code>" first.');
+  const tools = await initializeAndList(saved.access_token);
+  await saveToolCache(tools);
+  return tools;
 }
-async function help(toolName?: string): Promise<void> {
+async function showHelp(toolName?: string): Promise<void> {
   const saved = await loadState();
   if (!saved.access_token) {
-    console.log('Not connected yet. Run "mcp connect", then "mcp otp <six-digit-code>".'); printUsage(); return;
+    const cache = await loadToolCache();
+    console.log('Not connected. Run "mcp --connect" and, if prompted, "mcp --otp <six-digit-code>".');
+    if (cache) {
+      console.log(`Cached tool list from ${cache.updatedAt} (${cache.tools.length} tool(s)); run "mcp --refresh" after connecting to update it.`);
+      if (toolName) {
+        const tool = cache.tools.find(item => item.name === toolName);
+        if (!tool) { console.error(`Unknown cached tool "${toolName}". Run "mcp --help" to list cached tools.`); process.exitCode = 1; return; }
+        const outputSection = tool.outputSchema ? `\n\nOutput schema:\n${pretty(tool.outputSchema)}` : "\n\nOutput schema: Not provided by server.";
+        console.log(`${tool.name}${tool.description ? " — " + tool.description : ""}\nInput schema:\n${pretty(tool.inputSchema ?? { type: "object", properties: {} })}${outputSection}`);
+        return;
+      }
+      for (const tool of cache.tools) console.log(`- ${tool.name}${tool.description ? ": " + tool.description : ""}`);
+    }
+    printUsage(); return;
   }
-  const tools = await initializeAndList(saved.access_token);
-  await saveToolOutputSchemas(tools);
-  const latestState = await loadState();
+  const tools = await refreshTools();
   if (toolName) {
     const tool = tools.find(item => item.name === toolName);
-    if (!tool) { console.error(`Unknown tool "${toolName}". Run "mcp help" to list available tools.`); process.exitCode = 1; return; }
-    const outputSchema = tool.outputSchema ?? latestState.tool_output_schemas?.[tool.name];
-    const outputSection = outputSchema
-      ? `\n\nOutput schema:\n${pretty(outputSchema)}`
+    if (!tool) { console.error(`Unknown tool "${toolName}". Run "mcp --help" to list available tools.`); process.exitCode = 1; return; }
+    const outputSection = tool.outputSchema
+      ? `\n\nOutput schema:\n${pretty(tool.outputSchema)}`
       : "\n\nOutput schema: Not provided by server.";
     console.log(`${tool.name}${tool.description ? " — " + tool.description : ""}\nInput schema:\n${pretty(tool.inputSchema ?? { type: "object", properties: {} })}${outputSection}\n\nUsage: mcp ${tool.name} '<json-object>'`);
     return;
@@ -251,17 +294,23 @@ async function help(toolName?: string): Promise<void> {
 }
 function printUsage(): void {
   console.log("Usage:");
-  console.log("  mcp connect                 Start OAuth login (or reuse saved credentials)");
-  console.log("  mcp rollback                Restore auth state from before the last mcp connect");
-  console.log("  mcp otp <six-digit-code>    Complete login with the one-time code");
-  console.log("  mcp help                    Show connection and remote tool overview");
-  console.log("  mcp help <tool-name>        Show a tool's description, input schema, and output schema (if provided)");
-  console.log("  mcp <tool-name> '<json>'    Call a remote tool with JSON arguments");
-  console.log("\nExample: mcp tool-foo '{\"query\":\"hello\"}'");
+  console.log("  mcp --connect                 Check saved credentials or start OAuth authorization");
+  console.log("  mcp --otp <six-digit-code>    Complete pending OAuth authorization");
+  console.log("  mcp --disconnect              Remove local authentication credentials");
+  console.log("  mcp --rollback                Restore authentication state from before the last --connect");
+  console.log("  mcp --refresh                 Refresh the MCP tool list and schemas without re-authenticating");
+  console.log("  mcp --help [tool-name]        Show tool list or a tool's input/output schemas");
+  console.log("  mcp --version                 Show CLI version");
+  console.log("  mcp <tool-name> '<json>'      Call a remote MCP tool with JSON arguments");
+  console.log("\nExamples:");
+  console.log("  mcp --connect");
+  console.log("  mcp --otp 123456");
+  console.log("  mcp --help list_agents");
+  console.log("  mcp list_agents '{\"query\":\"hello\"}'");
 }
 async function callTool(name: string, jsonArg?: string): Promise<void> {
   const saved = await loadState();
-  if (!saved.access_token) throw new Error('Not connected. Run "mcp connect" and "mcp otp <six-digit-code>" first.');
+  if (!saved.access_token) throw new Error('Not connected. Run "mcp --connect" and, if prompted, "mcp --otp <six-digit-code>" first.');
   let args: Record<string, unknown> = {};
   if (jsonArg !== undefined) {
     let parsed: unknown;
@@ -270,19 +319,25 @@ async function callTool(name: string, jsonArg?: string): Promise<void> {
       throw new Error("Tool arguments must be a JSON object, e.g. '{\"query\":\"hello\"}'.");
     args = parsed as Record<string, unknown>;
   }
-  await initializeAndList(saved.access_token);
+  const tools = await initializeAndList(saved.access_token);
+  await saveToolCache(tools);
   const result = await mcpRequest(saved.access_token, "tools/call", { name, arguments: args });
   console.log(pretty(result));
   if (result.isError) process.exitCode = 1;
 }
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
-  if (!command || command === "help" || command === "--help" || command === "-h") { await help(args[0]); return; }
-  if (command === "connect") { if (args[0] === "--rollback") { await rollbackConnect(); return; } await connect(); return; }
-  if (command === "rollback") { await rollbackConnect(); return; }
-  if (command === "otp") { await submitOtp(args[0]); return; }
+  if (!command || command === "--help" || command === "-h") { await showHelp(args[0]); return; }
+  if (command === "--connect") { await connect(); return; }
+  if (command === "--otp") { await submitOtp(args[0]); return; }
+  if (command === "--rollback") { await rollbackConnect(); return; }
+  if (command === "--disconnect") { await disconnect(); return; }
+  if (command === "--refresh") {
+    const tools = await refreshTools();
+    console.log(`Refreshed tool cache: ${tools.length} tool(s) saved to ${TOOL_CACHE_FILE}.`); return;
+  }
   if (command === "--version" || command === "-v") { console.log("0.1.0"); return; }
-  if (command.startsWith("-")) { printUsage(); process.exitCode = 2; return; }
+  if (command.startsWith("-")) { printUsage(); throw new Error(`Unknown option: ${command}`); }
   await callTool(command, args[0]);
 }
 main().catch((error: unknown) => { console.error("Error:", error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
