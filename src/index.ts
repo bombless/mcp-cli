@@ -57,14 +57,19 @@ async function connect(): Promise<void> {
   catch { authMeta = await getJson(new URL("/.well-known/openid-configuration", authServer).toString()); }
   if (!authMeta.authorization_endpoint || !authMeta.token_endpoint || !authMeta.registration_endpoint)
     throw new Error("OAuth discovery is missing authorization_endpoint, token_endpoint, or registration_endpoint");
-  let clientInfo = saved.client_info;
+  let clientInfo: Record<string, unknown> | undefined = saved.client_info;
   if (!clientInfo || typeof clientInfo.client_id !== "string") {
-    clientInfo = await responseJson(await fetch(authMeta.registration_endpoint, {
+    const registered = await responseJson(await fetch(authMeta.registration_endpoint, {
       method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ client_name: CLIENT_NAME, redirect_uris: [REDIRECT_URI],
         grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none" })
-    }));
-    if (!clientInfo.client_id) throw new Error("OAuth dynamic registration did not return client_id");
+    })) as Record<string, unknown>;
+    if (typeof registered.client_id !== "string" || !registered.client_id)
+      throw new Error("OAuth dynamic registration did not return client_id");
+    clientInfo = registered;
+  }
+  if (!clientInfo || typeof clientInfo.client_id !== "string") {
+    throw new Error("OAuth client information is missing a valid client_id");
   }
   const verifier = random(48);
   const challenge = Buffer.from(await cryptoSubtleSha256(verifier)).toString("base64url");
