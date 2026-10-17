@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types --no-warnings
+#!/usr/bin/env node
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile, chmod, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";

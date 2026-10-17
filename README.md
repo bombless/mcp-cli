@@ -4,12 +4,12 @@ A TypeScript/Node.js command-line client for the OAuth-protected remote MCP serv
 
 ## Requirements
 
-- Node.js 22.6+
+- Node.js 20+
 - Access to the configured remote MCP server (`https://bombless.duckdns.org/mcp`)
 
 ## Install
 
-Requires Node.js 22.6 or later and npm. Install the latest version from the repository's default branch:
+Requires Node.js 20 or later and npm. Install the latest version from the repository's default branch:
 
 ```sh
 npm install -g bombless/mcp-cli
@@ -29,6 +29,7 @@ To install a specific tag or branch, append `#<tag-or-branch>` to the GitHub sho
 git clone https://github.com/bombless/mcp-cli.git
 cd mcp-cli
 npm install
+npm run compile
 npm link
 ```
 
