@@ -23,9 +23,19 @@ npm install -g git+https://github.com/bombless/mcp-cli.git
 
 To install a specific tag or branch, append `#<tag-or-branch>` to the GitHub shorthand, for example `npm install -g bombless/mcp-cli#v0.1.0`.
 
+### Install from a GitHub Release (recommended, no token needed)
+
+Each version tag (for example `v0.1.0`, which must match `version` in `package.json`) gets a GitHub Release with a prebuilt tarball attached:
+
+```sh
+npm install -g https://github.com/bombless/mcp-cli/releases/latest/download/mcp-cli.tgz
+```
+
+To install a specific version, use `https://github.com/bombless/mcp-cli/releases/download/v0.1.0/bombless-mcp-cli-0.1.0.tgz`.
+
 ### Install from GitHub Packages
 
-Pushing a version tag (for example `v0.1.0`, which must match `version` in `package.json`) publishes that version to the GitHub npm registry. Note that GitHub Packages requires authentication even for public packages, so you need a classic personal access token with the `read:packages` scope:
+The same tag also publishes that version to the GitHub npm registry. Note that GitHub Packages requires authentication even for public packages, so you need a classic personal access token with the `read:packages` scope:
 
 ```sh
 npm config set @bombless:registry https://npm.pkg.github.com
