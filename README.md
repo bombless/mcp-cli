@@ -23,15 +23,36 @@ npm install -g git+https://github.com/bombless/mcp-cli.git
 
 To install a specific tag or branch, append `#<tag-or-branch>` to the GitHub shorthand, for example `npm install -g bombless/mcp-cli#v0.1.0`.
 
-### Install from a GitHub Release (recommended, no token needed)
+### Install from a GitHub Release tarball (recommended, no token needed)
 
-Each version tag (for example `v0.1.0`, which must match `version` in `package.json`) gets a GitHub Release with a prebuilt tarball attached:
+Each version tag (for example `v0.1.1`, which must match `version` in `package.json`) gets a [GitHub Release](https://github.com/bombless/mcp-cli/releases) with a prebuilt tarball attached. The tarball already contains the compiled `dist/`, so no build step runs on your machine and no token is required.
+
+Install the latest release:
 
 ```sh
 npm install -g https://github.com/bombless/mcp-cli/releases/latest/download/mcp-cli.tgz
 ```
 
-To install a specific version, use `https://github.com/bombless/mcp-cli/releases/download/v0.1.0/bombless-mcp-cli-0.1.0.tgz`.
+Install a specific version (replace `0.1.1` with the version you want):
+
+```sh
+npm install -g https://github.com/bombless/mcp-cli/releases/download/v0.1.1/bombless-mcp-cli-0.1.1.tgz
+```
+
+Or download the tarball first (for offline or air-gapped machines) and install the local file:
+
+```sh
+curl -L -O https://github.com/bombless/mcp-cli/releases/latest/download/mcp-cli.tgz
+npm install -g ./mcp-cli.tgz
+```
+
+Each release has two identical assets: `bombless-mcp-cli-<version>.tgz` (versioned) and `mcp-cli.tgz` (stable name, used by the `latest` URL above).
+
+To upgrade, run the same install command again. To uninstall:
+
+```sh
+npm uninstall -g @bombless/mcp-cli
+```
 
 ### Install from GitHub Packages
 
