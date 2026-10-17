@@ -1,6 +1,6 @@
 {
   "name": "@bombless/mcp-cli",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "CLI client for an OAuth-protected remote MCP server",
   "type": "module",
   "bin": {
@@ -28,5 +28,12 @@
     "@types/node": "^22.15.30",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bombless/mcp-cli.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   }
 }

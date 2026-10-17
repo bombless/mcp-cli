@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile, chmod, unlink } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 const ENDPOINT = process.env.MCP_URL ?? "https://bombless.duckdns.org/mcp";
@@ -10,6 +12,8 @@ const CONNECT_BACKUP_FILE = AUTH_FILE + ".connect-backup";
 const TOOL_CACHE_FILE = AUTH_FILE + ".tools-cache.json";
 const REDIRECT_URI = "http://127.0.0.1:43127/oauth/callback";
 const CLIENT_NAME = "mcp-cli";
+// Single source of truth for the version: package.json (../package.json works from both src/ and dist/).
+const VERSION: string = (JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8")) as { version: string }).version;
 type Tool = { name: string; description?: string; inputSchema?: Record<string, unknown>; outputSchema?: Record<string, unknown>; [key: string]: unknown };
 type OAuthState = {
   access_token?: string; refresh_token?: string; client_info?: Record<string, unknown>;
@@ -245,7 +249,7 @@ async function mcpNotification(accessToken: string, method: string, params: Reco
 }
 async function initializeAndList(accessToken: string): Promise<Tool[]> {
   await mcpRequest(accessToken, "initialize", { protocolVersion: "2025-03-26", capabilities: {},
-    clientInfo: { name: CLIENT_NAME, version: "0.1.0" } });
+    clientInfo: { name: CLIENT_NAME, version: VERSION } });
   // MCP notifications are JSON-RPC messages without an id and must not expect a JSON-RPC result.
   await mcpNotification(accessToken, "notifications/initialized");
   const result = await mcpRequest(accessToken, "tools/list", {});
@@ -336,7 +340,7 @@ async function main(): Promise<void> {
     const tools = await refreshTools();
     console.log(`Refreshed tool cache: ${tools.length} tool(s) saved to ${TOOL_CACHE_FILE}.`); return;
   }
-  if (command === "--version" || command === "-v") { console.log("0.1.0"); return; }
+  if (command === "--version" || command === "-v") { console.log(VERSION); return; }
   if (command.startsWith("-")) { printUsage(); throw new Error(`Unknown option: ${command}`); }
   await callTool(command, args[0]);
 }
