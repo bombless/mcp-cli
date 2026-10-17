@@ -29,7 +29,7 @@ To install a specific tag or branch, append `#<tag-or-branch>` to the GitHub sho
 git clone https://github.com/bombless/mcp-cli.git
 cd mcp-cli
 npm install
-npm run build
+npm run compile
 npm link
 ```
 
