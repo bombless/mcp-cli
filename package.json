@@ -4,20 +4,19 @@
   "description": "CLI client for an OAuth-protected remote MCP server",
   "type": "module",
   "bin": {
-    "mcp": "./dist/index.js"
+    "mcp": "./src/index.ts"
   },
   "files": [
-    "dist",
+    "src",
     "README.md"
   ],
   "scripts": {
-    "compile": "tsc -p tsconfig.json",
-    "dev": "tsx src/index.ts",
-    "start": "node dist/index.js",
-    "prepublishOnly": "npm run compile"
+    "dev": "node --experimental-strip-types --no-warnings src/index.ts",
+    "start": "node --experimental-strip-types --no-warnings src/index.ts",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.6.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
