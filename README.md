@@ -25,7 +25,7 @@ To install a specific tag or branch, append `#<tag-or-branch>` to the GitHub sho
 
 ### Install from GitHub Packages
 
-Releases are also published to the GitHub npm registry. Note that GitHub Packages requires authentication even for public packages, so you need a classic personal access token with the `read:packages` scope:
+Pushing a version tag (for example `v0.1.0`, which must match `version` in `package.json`) publishes that version to the GitHub npm registry. Note that GitHub Packages requires authentication even for public packages, so you need a classic personal access token with the `read:packages` scope:
 
 ```sh
 npm config set @bombless:registry https://npm.pkg.github.com

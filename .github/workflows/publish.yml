@@ -1,9 +1,9 @@
 name: Publish to GitHub Packages
 
+# Pushing a tag like v0.1.0 publishes that version.
 on:
-  release:
-    types: [published]
-  workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -20,10 +20,22 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: "@bombless"
           cache: npm
+
+      - name: Check tag matches package.json version
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${PKG_VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version v${PKG_VERSION}"
+            exit 1
+          fi
+
       - run: npm ci
       - run: npm run compile
-      # Make sure the committed dist/ is what we publish, and warn if it drifted.
-      - run: git diff --exit-code -- dist
+
+      # dist/ is committed (needed for `npm i -g` from git); fail if it drifted from src/.
+      - name: Check dist is up to date
+        run: git diff --exit-code -- dist
+
       - run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
