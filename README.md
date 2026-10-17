@@ -25,7 +25,7 @@ To install a specific tag or branch, append `#<tag-or-branch>` to the GitHub sho
 
 ### Install from a GitHub Release tarball (recommended, no token needed)
 
-Each version tag (for example `v0.1.1`, which must match `version` in `package.json`) gets a [GitHub Release](https://github.com/bombless/mcp-cli/releases) with a prebuilt tarball attached. The tarball already contains the compiled `dist/`, so no build step runs on your machine and no token is required.
+Each version tag (for example `v0.1.2`, which must match `version` in `package.json`) gets a [GitHub Release](https://github.com/bombless/mcp-cli/releases) with a prebuilt tarball attached. The tarball already contains the compiled `dist/`, so no build step runs on your machine and no token is required.
 
 Install the latest release:
 
@@ -33,10 +33,10 @@ Install the latest release:
 npm install -g https://github.com/bombless/mcp-cli/releases/latest/download/mcp-cli.tgz
 ```
 
-Install a specific version (replace `0.1.1` with the version you want):
+Install a specific version (replace `0.1.2` with the version you want):
 
 ```sh
-npm install -g https://github.com/bombless/mcp-cli/releases/download/v0.1.1/bombless-mcp-cli-0.1.1.tgz
+npm install -g https://github.com/bombless/mcp-cli/releases/download/v0.1.2/bombless-mcp-cli-0.1.2.tgz
 ```
 
 Or download the tarball first (for offline or air-gapped machines) and install the local file:
